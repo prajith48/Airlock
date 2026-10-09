@@ -1,0 +1,55 @@
+{
+  "name": "airlock",
+  "version": "1.0.0",
+  "description": "A local-first security layer for development servers and AI agent tooling",
+  "main": "dist/cli.js",
+  "type": "module",
+  "bin": {
+    "airlock": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "tsc --noEmit",
+    "start": "npm run build && node dist/cli.js",
+    "status": "node dist/cli.js status",
+    "guard": "npm run build && node dist/cli.js guard --port 3000 node test-server.js",
+    "guard:dev": "tsx src/cli.ts guard --port 3000 node test-server.js",
+    "mcp-watch": "npm run build && node dist/cli.js mcp-watch",
+    "secret-gate": "npm run build && node dist/cli.js secret-gate start",
+    "quick:guard": "node dist/cli.js guard --port 3000 node test-server.js",
+    "quick:secret-gate": "node dist/cli.js secret-gate start",
+    "demo": "npm run build && node dist/cli.js status && node dist/cli.js guard --port 3000 node test-server.js",
+    "clean": "rm -rf dist && rm -f /tmp/airlock-secrets.sock"
+  },
+  "keywords": [
+    "security",
+    "development",
+    "dns-rebinding",
+    "mcp",
+    "ai-agents",
+    "local-security"
+  ],
+  "author": "Prajith48",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/http-proxy": "^1.17.17",
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "http-proxy": "^1.18.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.5",
+    "vitest": "^5.0.3"
+  }
+}

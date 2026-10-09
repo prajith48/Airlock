@@ -1,0 +1,124 @@
+# Docker Compose for Airlock Demo
+# Full demonstration environment with protected server and attack simulation
+version: '3.8'
+
+services:
+  # Airlock Guard protecting test server
+  airlock-guard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airlock:latest
+    container_name: airlock-guard
+    ports:
+      - "3000:3000"  # Public-facing protected port
+    command: node dist/cli.js guard --port 3000 node test-server.js
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    networks:
+      - airlock-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - airlock-logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Attacker server for demonstration (optional)
+  attacker-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airlock:latest
+    container_name: attacker-demo
+    ports:
+      - "8888:8888"  # Attacker control panel
+    command: node attack-demo/attacker-server.js
+    environment:
+      - NODE_ENV=production
+    networks:
+      - airlock-net
+    restart: unless-stopped
+    depends_on:
+      airlock-guard:
+        condition: service_healthy
+    volumes:
+      - attacker-data:/app/attack-demo
+    profiles:
+      - demo  # Only start with: docker-compose --profile demo up
+
+  # Secret Gate broker (optional)
+  secret-gate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airlock:latest
+    container_name: secret-gate
+    command: node dist/cli.js secret-gate start
+    environment:
+      - NODE_ENV=production
+    networks:
+      - airlock-net
+    volumes:
+      - secret-socket:/tmp/airlock
+      # Mount your .env file if needed
+      # - .env.example:/app/.env:ro
+    restart: unless-stopped
+    profiles:
+      - full  # Only start with: docker-compose --profile full up
+
+networks:
+  airlock-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  secret-socket:
+    name: airlock-secret-socket
+  airlock-logs:
+    name: airlock-logs
+  attacker-data:
+    name: airlock-attacker-data
+
+# ═══════════════════════════════════════════════════════════════
+# Usage Examples
+# ═══════════════════════════════════════════════════════════════
+#
+# Start protected server only:
+#   docker-compose up airlock-guard
+#
+# Start full demo (protected server + attacker):
+#   docker-compose --profile demo up
+#
+# Start everything (protected server + attacker + secret gate):
+#   docker-compose --profile full up
+#
+# Build and start:
+#   docker-compose build && docker-compose up
+#
+# View logs:
+#   docker-compose logs -f airlock-guard
+#   docker-compose logs -f attacker-demo
+#
+# Stop all services:
+#   docker-compose down
+#
+# Stop and remove volumes:
+#   docker-compose down -v
+#
+# Access services:
+#   Protected Server: http://localhost:3000
+#   Attack Dashboard: http://localhost:8888/attack (if demo profile)
+#
+# ═══════════════════════════════════════════════════════════════

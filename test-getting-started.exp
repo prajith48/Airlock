@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+set timeout -1
+spawn ./scripts/getting-started.sh
+expect "Press Enter to begin..."
+send "\r"
+expect "Press Enter to continue..."
+send "\r"
+expect "Press Enter to continue..."
+send "\r"
+expect "Enter choice \\\[1-5\\\]: "
+send "4\r"
+expect eof

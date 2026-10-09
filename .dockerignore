@@ -1,0 +1,47 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Build
+dist
+
+# Tests
+coverage
+*.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# Demo files (include selectively)
+attack-demo/stolen-data.json
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# CI/CD
+.github
+.gitlab-ci.yml
