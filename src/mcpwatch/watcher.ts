@@ -12,7 +12,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createLogger } from "../utils/logger.js";
 import { validatePath } from "../utils/pathValidation.js";
-import { Transform } from "node:stream";
 
 const logger = createLogger("mcpwatch");
 
@@ -58,68 +57,41 @@ function extractPaths(args: Record<string, unknown> | undefined): string[] {
 }
 
 /**
- * Creates a transform stream that inspects MCP messages without blocking them
+ * Creates a passive newline-delimited JSON-RPC inspector. Inspection never
+ * changes the bytes forwarded to the wrapped server.
  */
-function createInspectionStream(
+export function createMCPInspector(
   projectRoot: string,
   enableDetection: boolean
-): Transform {
+): (chunk: Buffer) => void {
   let buffer = "";
-
-  return new Transform({
-    transform(chunk, _encoding, callback) {
-      // Always pass through immediately (fail-open)
-      this.push(chunk);
-
-      if (!enableDetection) {
-        callback();
+  return (chunk: Buffer): void => {
+    if (!enableDetection) return;
+    try {
+      buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer) > 1024 * 1024) {
+        logger.warn("MCP inspection buffer exceeded 1 MiB; clearing incomplete message");
+        buffer = "";
         return;
       }
-
-      try {
-        // Parse JSON-RPC messages for detection (non-blocking)
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep incomplete line
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          try {
-            const message: JSONRPCMessage = JSON.parse(line);
-
-            // FR-8: Parse MCP tool-call messages
-            if (message.method === "tools/call" && message.params?.arguments) {
-              const toolName = message.params.name || "unknown";
-              const paths = extractPaths(message.params.arguments);
-
-              // FR-9, FR-10: Flag and log suspicious paths
-              for (const path of paths) {
-                const validation = validatePath(path, projectRoot);
-                if (validation.isViolation) {
-                  logger.warn({
-                    tool: toolName,
-                    path,
-                    reason: validation.reason,
-                    timestamp: new Date().toISOString(),
-                  }, "⚠️  Suspicious MCP tool call detected");
-
-                  // TODO: Desktop notification (optional, can be added later)
-                }
-              }
-            }
-          } catch (parseError) {
-            // Invalid JSON - ignore silently (don't break the stream)
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const message: JSONRPCMessage = JSON.parse(line);
+          if (message.method !== "tools/call" || !message.params?.arguments) continue;
+          const toolName = message.params.name || "unknown";
+          for (const path of extractPaths(message.params.arguments)) {
+            const validation = validatePath(path, projectRoot);
+            if (validation.isViolation) logger.warn({ tool: toolName, path, reason: validation.reason }, "Suspicious MCP tool call detected (monitoring only)");
           }
-        }
-      } catch (error) {
-        // Detection logic failed - log but don't break the stream (fail-open)
-        logger.error({ error }, "Error in MCP inspection logic (stream continues)");
+        } catch { /* Non-JSON lines are passed through and not inspected. */ }
       }
-
-      callback();
-    },
-  });
+    } catch (error) {
+      logger.error({ error }, "MCP inspection failed; continuing transparent relay");
+    }
+  };
 }
 
 let activeMCPServer: ChildProcess | null = null;
@@ -148,22 +120,38 @@ export async function startMCPWatch({
     throw new Error("No MCP server command provided");
   }
 
+  // Spawns shell execution if command has spaces or args on Windows
+  const useShell = process.platform === "win32";
+
   // FR-7: Spawn the real MCP server as a child process
   const mcpServer = spawn(command, args, {
-    stdio: ["pipe", "pipe", "inherit"], // stdin, stdout, stderr
+    stdio: ["pipe", "pipe", "pipe"], // stdout is protocol; stderr is diagnostics
+    shell: useShell,
+    // Keep the protocol child attached. Detached process groups make stdio
+    // lifecycle and exit propagation unreliable for a transparent wrapper.
+    detached: false,
   });
 
   activeMCPServer = mcpServer;
 
-  // Create inspection streams (non-blocking, fail-open)
-  const toServerInspector = createInspectionStream(projectRoot, enableDetection);
-  const fromServerInspector = createInspectionStream(projectRoot, enableDetection);
+  const inspect = createMCPInspector(projectRoot, enableDetection);
 
-  // Pipe: agent stdin → inspection → MCP server stdin
-  process.stdin.pipe(toServerInspector).pipe(mcpServer.stdin);
+  // Use explicit forwarding rather than a transform pipeline. This preserves
+  // exact chunks and observes backpressure, while the inspector is strictly
+  // side-effect-only and cannot consume protocol bytes.
+  process.stdin.on("data", (chunk: Buffer) => {
+    inspect(chunk);
+    if (!mcpServer.stdin.write(chunk)) process.stdin.pause();
+  });
+  process.stdin.once("end", () => mcpServer.stdin.end());
+  mcpServer.stdin.on("drain", () => process.stdin.resume());
+  mcpServer.stdin.on("error", (error) => logger.warn({ error }, "Wrapped MCP server stdin closed"));
 
-  // Pipe: MCP server stdout → inspection → agent stdout
-  mcpServer.stdout.pipe(fromServerInspector).pipe(process.stdout);
+  // Server output is protocol data. Relay it directly; tool calls originate on
+  // stdin, so inspecting output here adds no security value and risks delaying
+  // or corrupting framed responses.
+  mcpServer.stdout.pipe(process.stdout);
+  mcpServer.stderr.pipe(process.stderr);
 
   // Handle MCP server termination
   mcpServer.on("error", (err) => {
@@ -173,7 +161,9 @@ export async function startMCPWatch({
 
   mcpServer.on("exit", (code, signal) => {
     logger.info(`MCP server exited with code ${code} and signal ${signal}`);
-    process.exit(code ?? 0);
+    // Do not force an immediate exit: stdout may still contain bytes queued by
+    // the transparent relay. Let stream shutdown flush them first.
+    process.exitCode = code ?? 0;
   });
 
   // Graceful shutdown
@@ -196,12 +186,22 @@ export async function startMCPWatch({
 function cleanup(): void {
   if (activeMCPServer) {
     try {
-      activeMCPServer.kill("SIGTERM");
-      setTimeout(() => {
-        if (activeMCPServer) {
-          activeMCPServer.kill("SIGKILL");
+      const pid = activeMCPServer.pid;
+      if (pid) {
+        if (process.platform !== "win32") {
+          try { process.kill(-pid, "SIGTERM"); } catch { activeMCPServer.kill("SIGTERM"); }
+          setTimeout(() => {
+            try { process.kill(-pid, "SIGKILL"); } catch {}
+          }, 500).unref();
+        } else {
+          activeMCPServer.kill("SIGTERM");
+          setTimeout(() => {
+            if (activeMCPServer && activeMCPServer.pid) {
+              activeMCPServer.kill("SIGKILL");
+            }
+          }, 500).unref();
         }
-      }, 500).unref();
+      }
     } catch {
       // Process might already be dead
     }

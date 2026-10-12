@@ -10,7 +10,8 @@
 import { Command } from "commander";
 import { runDevServer } from "./guard/runner.js";
 import { startMCPWatch } from "./mcpwatch/watcher.js";
-import { loadSecretsFromFile, startBroker } from "./secretgate/broker.js";
+import { loadSecretsFromFile, startBroker, stopBroker } from "./secretgate/broker.js";
+import { getSocketPath } from "./utils/socketPath.js";
 import { createLogger } from "./utils/logger.js";
 import { handleError, ErrorCategory, ErrorSeverity } from "./utils/errorHandler.js";
 import {
@@ -21,11 +22,11 @@ import {
   printWarn,
   printErr,
   printTip,
+  printMCPWatchReady,
   COLORS as C,
 } from "./utils/banner.js";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { execSync } from "node:child_process";
 
 const logger = createLogger("cli");
 const program = new Command();
@@ -128,8 +129,6 @@ program
   .argument("<serverCommand...>", "The real MCP server command to wrap")
   .option("-r, --root <path>", "Allowed project root directory for filesystem operations", process.cwd())
   .action(async (serverCommand: string[], options) => {
-    printBanner("MCP Watch", "1.0.0");
-
     const projectRoot = resolve(options.root);
 
     if (!existsSync(projectRoot)) {
@@ -155,12 +154,8 @@ program
       return;
     }
 
-    printSection("MCP Watch Configuration");
-    printStatus("Server command", serverCommand.join(" "));
-    printStatus("Project root",   projectRoot, "ok");
-    printStatus("Detection",      "enabled", "ok");
-    printStatus("Mode",           "transparent (fail-open)");
-    process.stdout.write("\n");
+    // stdout is the MCP transport; this colorful readiness display is stderr-only.
+    printMCPWatchReady(projectRoot);
 
     try {
       await startMCPWatch({
@@ -211,8 +206,9 @@ secretGate
 
 secretGate
   .command("start")
-  .description("Start secrets broker daemon, wipe configuration file on launch")
-  .option("-e, --env <path>", "Path to the .env file to consume and delete", ".env")
+  .description("Start secrets broker daemon")
+  .option("-e, --env <path>", "Path to the .env file to consume", ".env")
+  .option("--delete-source", "Explicitly authorize deletion of the source .env file after successful load")
   .action(async (options) => {
     printBanner("Secret Gate", "1.0.0");
     printSection("Starting Secrets Broker");
@@ -223,20 +219,29 @@ secretGate
       if (existsSync(envPath)) {
         logger.info(`Loading secrets from ${envPath}`);
         await loadSecretsFromFile(envPath);
-        printOk(`Secrets loaded — plaintext file removed`);
+        printOk(`Secrets loaded into memory`);
       } else {
         printWarn(`No .env file found at ${envPath} — starting with empty keystore`);
         logger.warn(`No .env file found at ${envPath}. Starting with empty keystore.`);
       }
 
-      printStatus("Socket path", "/tmp/airlock-secrets.sock", "ok");
+      await startBroker();
+      printStatus("Socket path", getSocketPath(), "ok");
       printStatus("Broker status", "listening", "ok");
       process.stdout.write("\n");
       printTip("Connect with: import { getSecrets } from 'airlock/secretgate/client'");
       process.stdout.write("\n");
-
-      // Start socket broker (FR-12, FR-13)
-      await startBroker();
+      
+      // Delete source AFTER broker starts successfully, if requested
+      if (options.deleteSource && existsSync(envPath)) {
+         await import("node:fs/promises").then(fs => fs.unlink(envPath));
+         printOk(`Plaintext secrets file securely removed: ${envPath}`);
+      } else if (existsSync(envPath)) {
+         printWarn(`Source file ${envPath} was NOT deleted (use --delete-source to authorize)`);
+      }
+      const stop = (): void => { void stopBroker().finally(() => process.exit(0)); };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
     } catch (error) {
       handleError(error instanceof Error ? error : new Error(String(error)), {
         category: ErrorCategory.PROCESS,
@@ -283,26 +288,14 @@ program
 
     // Check socket
     printSection("Secret Gate Socket");
-    const sockPath = "/tmp/airlock-secrets.sock";
+    const sockPath = getSocketPath();
     const sockExists = existsSync(sockPath);
-    printStatus("Socket file", sockExists ? `active (${sockPath})` : "not running", sockExists ? "ok" : "blocked");
-
-    // Port probe: check 3000
-    printSection("Port Availability");
-    const portsToCheck = [3000, 8888];
-    for (const port of portsToCheck) {
-      try {
-        execSync(`lsof -i :${port} -sTCP:LISTEN -t`, { stdio: "pipe" });
-        printStatus(`Port ${port}`, "in use", "warn");
-      } catch {
-        printStatus(`Port ${port}`, "available", "ok");
-      }
-    }
+    printStatus("Socket file", sockExists ? `present; health unverified (${sockPath})` : "not present", sockExists ? "warn" : "blocked");
 
     printSection("Components");
-    printStatus("Guard",      "DNS rebinding protection", "ok");
-    printStatus("MCP Watch",  "AI agent monitoring",      "ok");
-    printStatus("Secret Gate","In-memory secrets broker", "ok");
+    printStatus("Guard",      "not health-checked (run guard to start)", "warn");
+    printStatus("MCP Watch",  "not health-checked (run mcp-watch to start)", "warn");
+    printStatus("Secret Gate", sockExists ? "socket present; health unverified" : "not running", sockExists ? "warn" : "blocked");
 
     process.stdout.write("\n");
     printTip("Run 'airlock guard node test-server.js' to start a protected demo server");

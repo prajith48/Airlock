@@ -2,7 +2,7 @@
 
 **A local-first security layer for development servers and AI agent tooling built in TypeScript/Node.js.**
 
-Airlock protects your local development environment from real-world attacks. Watch the demo to see attackers try to steal your API keys, user data, and credit cards — and watch Airlock block them all.
+Airlock adds local development safeguards. It reduces specific risks, but it is not a complete endpoint-security product and does not guarantee that every attack is blocked.
 
 ## 🎯 What Airlock Protects Against
 
@@ -17,27 +17,27 @@ Airlock mitigates three developer-centric threat landscapes:
 
 ```bash
 # Clone and setup
-git clone https://github.com/your-username/airlock.git
+git clone https://github.com/prajith48/Airlock.git
 cd airlock
 npm install
 npm run build
 
 # Run the attack demo (automated)
-./attack-demo/demo-attack.sh
+./scripts/demo-attack.sh
 ```
 
 This will show you:
 1. **Before Airlock**: Attacker steals API keys, user data, credit cards 💀
-2. **After Airlock**: All attacks blocked, data protected 🛡️
+2. **With Guard enabled**: malformed external Host/Origin requests are rejected 🛡️
 
 **Or start using Airlock right away:**
 
 ```bash
 # Simplest way - builds and starts with test server
-./start.sh
+./scripts/start.sh
 
 # Development mode (fast, no build)
-./start-dev.sh
+./scripts/start-dev.sh
 
 # Using npm scripts
 npm run guard        # Build + start
@@ -81,7 +81,7 @@ Airlock is partitioned into three discrete security components running cohesivel
 Ensure you have **Node.js v18+** installed. Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/your-username/airlock.git
+git clone https://github.com/prajith48/Airlock.git
 cd airlock
 npm install
 npm run build
@@ -96,14 +96,14 @@ npm link # Installs the CLI globally as 'airlock' command
 
 ```bash
 # Start Airlock with test server
-./start.sh                    # Production build + start
-./start-dev.sh                # Fast dev mode (no build)
+./scripts/start.sh            # Production build + start
+./scripts/start-dev.sh        # Fast dev mode (no build)
 
 # Stop all Airlock processes
-./stop.sh
+./scripts/stop.sh
 
 # Run attack demonstration
-./attack-demo/demo-attack.sh
+./scripts/demo-attack.sh
 
 # Using npm scripts
 npm run guard                 # Build + start guard
@@ -112,7 +112,7 @@ npm run secret-gate           # Start secret gate
 npm run clean                 # Clean up everything
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for detailed startup options and troubleshooting.
+See [the quick-start guide](docs/getting-started/quickstart.md) for detailed startup options and troubleshooting.
 
 ---
 
@@ -128,10 +128,10 @@ A malicious website loaded in a browser can execute a series of DNS queries that
 **Easy Start:**
 ```bash
 # Simplest way
-./start.sh
+./scripts/start.sh
 
 # Development mode (no build)
-./start-dev.sh
+./scripts/start-dev.sh
 
 # Using npm
 npm run guard        # Build + start
@@ -202,7 +202,7 @@ Wrap the MCP server registration in your IDE config (e.g. Claude Desktop config 
 ```
 
 ### Security Mechanism
-*   Acts as a transparent `stdio` pipe (fail-open model). Even if Airlock crashes, the MCP server continues working.
+*   Acts as a transparent `stdio` pipe in passive/fail-open monitoring mode. It reports suspicious calls; it does not block them. If the wrapper exits, the wrapped server's stdio connection also ends.
 *   Intercepts JSON-RPC tool invocations (`tools/call`).
 *   Resolves and evaluates folder coordinates to flag directory traversal attempts (`../` out-of-boundary calls).
 *   Alerts on known denylist strings (`.ssh`, `.env`, etc.) and logs warning payloads to `airlock.log`.
@@ -220,9 +220,9 @@ Placing `.env` configurations in the root directory leaves credentials vulnerabl
     ```bash
     airlock secret-gate init --env .env
     ```
-2.  Import secrets into secure vault memory and automatically wipe the source `.env` file:
+2.  Load secrets into the local broker. The source is retained unless you explicitly authorize deletion:
     ```bash
-    airlock secret-gate start --env .env
+    airlock secret-gate start --env .env --delete-source
     ```
 3.  Implement the client-fetch method in your project code:
     ```javascript
@@ -231,6 +231,18 @@ Placing `.env` configurations in the root directory leaves credentials vulnerabl
     // Fetches keys dynamically from socket broker in-memory
     const secrets = await getSecrets(['API_KEY', 'DATABASE_URL']);
     ```
+
+---
+
+## Security limits
+
+Guard only accepts `localhost` and `127.0.0.1` authorities and is intentionally bound to loopback. It cannot protect a target process that ignores its `PORT`/`HOST` environment settings or services exposed independently.
+
+MCP Watch is detection-only. It has no enforcement authority over the wrapped MCP server, and path alerts are not proof that a server will refuse a filesystem operation.
+
+Secret Gate uses a per-user local socket with restrictive Unix permissions. It is not a hardware vault and does not protect secrets from malicious code running as the same OS user, process-memory inspection, debuggers, crash dumps, swap, backups, or filesystem snapshots. `--delete-source` performs ordinary unlinking, which is not secure erasure on modern filesystems.
+
+Report suspected security issues privately to the repository maintainer rather than including credentials or proof-of-concept secrets in a public issue.
 
 ---
 

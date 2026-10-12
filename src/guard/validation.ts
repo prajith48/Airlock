@@ -20,16 +20,7 @@ const logger = createLogger("guard");
  */
 const ALLOWED_HOSTS = ["localhost", "127.0.0.1"];
 
-/**
- * Allowed Origin/Referer patterns for cross-origin requests
- * These patterns ensure requests originate from the local machine
- */
-const ALLOWED_ORIGIN_PATTERNS = [
-  /^http:\/\/localhost(:\d+)?$/,
-  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
-  /^https:\/\/localhost(:\d+)?$/,
-  /^https:\/\/127\.0\.0\.1(:\d+)?$/,
-];
+
 
 /**
  * Validates that the Host header matches localhost/127.0.0.1
@@ -39,17 +30,34 @@ const ALLOWED_ORIGIN_PATTERNS = [
  */
 export function validateHost(host: string | undefined): boolean {
   if (!host) {
-    // Missing Host header is suspicious
     logger.warn("Request missing Host header");
     return false;
   }
 
-  // Extract hostname without port (Host header format: "hostname:port")
-  const hostname = host.split(":")[0];
+  // Accept only an exact localhost hostname, optionally followed
+  // by a numeric TCP port. Do not split blindly on ":".
+  const match = /^(localhost|127\.0\.0\.1)(?::([0-9]+))?$/i.exec(host);
 
-  if (!hostname || !ALLOWED_HOSTS.includes(hostname)) {
+  if (!match) {
+    logger.warn({ host }, "Invalid Host header detected");
+    return false;
+  }
+
+  const hostname = match[1]!.toLowerCase();
+  const portText = match[2];
+
+  if (!ALLOWED_HOSTS.includes(hostname)) {
     logger.warn({ host, hostname }, "Invalid Host header detected");
     return false;
+  }
+
+  if (portText !== undefined) {
+    const port = Number(portText);
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      logger.warn({ host, port }, "Invalid port in Host header");
+      return false;
+    }
   }
 
   return true;
@@ -66,37 +74,35 @@ export function validateOrigin(
   origin: string | undefined,
   referer: string | undefined
 ): boolean {
-  // If neither Origin nor Referer is present, allow it
-  // (non-CORS requests like direct navigation don't have Origin)
   if (!origin && !referer) {
     return true;
   }
 
-  // Check Origin first (more reliable than Referer)
-  if (origin) {
-    const isValid = ALLOWED_ORIGIN_PATTERNS.some((pattern) => pattern.test(origin));
-    if (!isValid) {
-      logger.warn({ origin }, "Invalid Origin header detected");
+  const validateUrl = (urlString: string) => {
+    try {
+      const url = new URL(urlString);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+      const hostname = url.hostname.toLowerCase();
+      if (hostname !== "localhost" && hostname !== "127.0.0.1") return false;
+      if (url.port) {
+        const port = Number(url.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+      }
+      if (url.username || url.password) return false;
+      return true;
+    } catch {
       return false;
     }
+  };
+
+  if (origin && !validateUrl(origin)) {
+    logger.warn({ origin }, "Invalid Origin header detected");
+    return false;
   }
 
-  // Also validate Referer if present (defense in depth)
-  // Referer includes the full URL with path, so we extract just the origin
-  if (referer) {
-    try {
-      const refererUrl = new URL(referer);
-      const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
-      const isValid = ALLOWED_ORIGIN_PATTERNS.some((pattern) => pattern.test(refererOrigin));
-      if (!isValid) {
-        logger.warn({ referer, refererOrigin }, "Invalid Referer header detected");
-        return false;
-      }
-    } catch {
-      // Invalid URL format
-      logger.warn({ referer }, "Malformed Referer header detected");
-      return false;
-    }
+  if (referer && !validateUrl(referer)) {
+    logger.warn({ referer }, "Invalid Referer header detected");
+    return false;
   }
 
   return true;
@@ -110,6 +116,23 @@ export function validateOrigin(
  * @returns true to allow, false to drop connection
  */
 export function validateRequest(req: http.IncomingMessage): boolean {
+  // Node exposes duplicate headers via rawHeaders. A proxy must not choose one
+  // value from an ambiguous Host/Origin pair.
+  const duplicateSensitiveHeader = (name: string): boolean => {
+    let count = 0;
+    const rawHeaders = req.rawHeaders;
+    // Unit callers and a few adapters provide only headers; Node HTTP requests
+    // always have rawHeaders, which is where duplicate detection is meaningful.
+    if (!rawHeaders) return false;
+    for (let index = 0; index < rawHeaders.length; index += 2) {
+      if (rawHeaders[index]?.toLowerCase() === name) count += 1;
+    }
+    return count > 1;
+  };
+  if (duplicateSensitiveHeader("host") || duplicateSensitiveHeader("origin") || duplicateSensitiveHeader("referer")) {
+    logger.warn("Request contains duplicate security-sensitive headers");
+    return false;
+  }
   const host = req.headers.host;
   const origin = req.headers.origin as string | undefined;
   const referer = req.headers.referer as string | undefined;

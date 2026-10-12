@@ -1,0 +1,6 @@
+# Publish only the runnable package artifacts and user-facing metadata.
+*
+!dist/
+!dist/**
+!README.md
+!LICENSE
