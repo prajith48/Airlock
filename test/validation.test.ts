@@ -1,5 +1,10 @@
+
 import { describe, it, expect } from "vitest";
-import { validateHost, validateOrigin, validateRequest } from "../src/guard/validation.js";
+import {
+  validateHost,
+  validateOrigin,
+  validateRequest,
+} from "../src/guard/validation.js";
 import { IncomingMessage } from "node:http";
 
 describe("Dev Server Guard - Header Validation", () => {
@@ -25,6 +30,31 @@ describe("Dev Server Guard - Header Validation", () => {
 
     it("should reject missing Host header", () => {
       expect(validateHost(undefined)).toBe(false);
+    });
+
+    it("should reject malformed Host headers and ports", () => {
+      const invalidHosts = [
+        "localhost:bad",
+        "localhost:",
+        "localhost:0",
+        "localhost:65536",
+        "localhost:3000@evil.com",
+        "localhost:3000.evil.com",
+        "localhost:3000:80",
+        "evil.com@localhost:3000",
+        "localhost.",
+      ];
+
+      for (const host of invalidHosts) {
+        expect(validateHost(host), `Host should be rejected: ${host}`).toBe(
+          false
+        );
+      }
+    });
+
+    it("should accept case-insensitive localhost", () => {
+      expect(validateHost("LOCALHOST")).toBe(true);
+      expect(validateHost("LocalHost:3000")).toBe(true);
     });
   });
 
@@ -95,6 +125,16 @@ describe("Dev Server Guard - Header Validation", () => {
         headers: {
           host: "evil.com",
           origin: "http://malicious.site",
+        },
+      } as IncomingMessage;
+
+      expect(validateRequest(mockReq)).toBe(false);
+    });
+
+    it("should reject malformed Host even without Origin or Referer", () => {
+      const mockReq = {
+        headers: {
+          host: "localhost:3000@evil.com",
         },
       } as IncomingMessage;
 

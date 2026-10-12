@@ -27,23 +27,23 @@ export const COLORS = C;
  * Prints the Airlock startup banner with version and mode information
  */
 export function printBanner(mode: string, version = "1.0.0"): void {
-  process.stdout.write("\n");
-  process.stdout.write(`${C.cyan}${C.bold}`);
-  process.stdout.write("  ╔═══════════════════════════════════════════╗\n");
-  process.stdout.write("  ║   █████╗ ██╗██████╗ ██╗      ██████╗  ██╗║\n");
-  process.stdout.write("  ║  ██╔══██╗██║██╔══██╗██║     ██╔═══██╗██╔╝║\n");
-  process.stdout.write("  ║  ███████║██║██████╔╝██║     ██║   ██║█╔╝ ║\n");
-  process.stdout.write("  ║  ██╔══██║██║██╔══██╗██║     ██║   ██║╗╗  ║\n");
-  process.stdout.write("  ║  ██║  ██║██║██║  ██║███████╗╚██████╔╝██╗ ║\n");
-  process.stdout.write("  ║  ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝║\n");
-  process.stdout.write("  ╚═══════════════════════════════════════════╝\n");
-  process.stdout.write(`${C.reset}`);
-  process.stdout.write(
+  process.stderr.write("\n");
+  process.stderr.write(`${C.cyan}${C.bold}`);
+  process.stderr.write("  ╔═══════════════════════════════════════════╗\n");
+  process.stderr.write("  ║   █████╗ ██╗██████╗ ██╗      ██████╗  ██╗║\n");
+  process.stderr.write("  ║  ██╔══██╗██║██╔══██╗██║     ██╔═══██╗██╔╝║\n");
+  process.stderr.write("  ║  ███████║██║██████╔╝██║     ██║   ██║█╔╝ ║\n");
+  process.stderr.write("  ║  ██╔══██║██║██╔══██╗██║     ██║   ██║╗╗  ║\n");
+  process.stderr.write("  ║  ██║  ██║██║██║  ██║███████╗╚██████╔╝██╗ ║\n");
+  process.stderr.write("  ║  ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝║\n");
+  process.stderr.write("  ╚═══════════════════════════════════════════╝\n");
+  process.stderr.write(`${C.reset}`);
+  process.stderr.write(
     `  ${C.dim}Local-First Security Layer${C.reset}` +
     `  ${C.blue}v${version}${C.reset}` +
     `  ${C.yellow}◆ ${mode}${C.reset}\n`
   );
-  process.stdout.write("\n");
+  process.stderr.write("\n");
 }
 
 /**
@@ -51,9 +51,9 @@ export function printBanner(mode: string, version = "1.0.0"): void {
  */
 export function printSection(title: string): void {
   const line = "─".repeat(50);
-  process.stdout.write(`\n  ${C.dim}${line}${C.reset}\n`);
-  process.stdout.write(`  ${C.bold}${C.white}${title}${C.reset}\n`);
-  process.stdout.write(`  ${C.dim}${line}${C.reset}\n\n`);
+  process.stderr.write(`\n  ${C.dim}${line}${C.reset}\n`);
+  process.stderr.write(`  ${C.bold}${C.white}${title}${C.reset}\n`);
+  process.stderr.write(`  ${C.dim}${line}${C.reset}\n\n`);
 }
 
 /**
@@ -65,28 +65,28 @@ export function printStatus(label: string, value: string, badge?: "ok" | "warn" 
                badge === "blocked" ? `${C.red}✘${C.reset}` :
                `${C.blue}›${C.reset}`;
   const padded = label.padEnd(22);
-  process.stdout.write(`  ${icon}  ${C.dim}${padded}${C.reset}  ${C.bold}${value}${C.reset}\n`);
+  process.stderr.write(`  ${icon}  ${C.dim}${padded}${C.reset}  ${C.bold}${value}${C.reset}\n`);
 }
 
 /**
  * Prints a success line
  */
 export function printOk(msg: string): void {
-  process.stdout.write(`  ${C.green}${C.bold}✔${C.reset}  ${msg}\n`);
+  process.stderr.write(`  ${C.green}${C.bold}✔${C.reset}  ${msg}\n`);
 }
 
 /**
  * Prints a warning line
  */
 export function printWarn(msg: string): void {
-  process.stdout.write(`  ${C.yellow}${C.bold}⚠${C.reset}  ${msg}\n`);
+  process.stderr.write(`  ${C.yellow}${C.bold}⚠${C.reset}  ${msg}\n`);
 }
 
 /**
  * Prints an error line
  */
 export function printErr(msg: string): void {
-  process.stdout.write(`  ${C.red}${C.bold}✘${C.reset}  ${msg}\n`);
+  process.stderr.write(`  ${C.red}${C.bold}✘${C.reset}  ${msg}\n`);
 }
 
 /**
@@ -96,14 +96,14 @@ export function printSecurityEvent(type: "blocked" | "detected", msg: string): v
   const prefix = type === "blocked"
     ? `${C.bgRed}${C.bold} BLOCKED ${C.reset}`
     : `${C.yellow}${C.bold} DETECTED ${C.reset}`;
-  process.stdout.write(`  ${prefix}  ${msg}\n`);
+  process.stderr.write(`  ${prefix}  ${msg}\n`);
 }
 
 /**
  * Prints a live connection line showing the proxy routing
  */
 export function printProxyReady(publicPort: number, targetPort: number): void {
-  process.stdout.write(
+  process.stderr.write(
     `\n  ${C.green}${C.bold}◉  Guard Active${C.reset}\n` +
     `     ${C.cyan}http://localhost:${publicPort}${C.reset}` +
     `  ${C.dim}──────────►${C.reset}` +
@@ -111,9 +111,18 @@ export function printProxyReady(publicPort: number, targetPort: number): void {
   );
 }
 
+/** MCP stdout is protocol data, so this intentionally writes only to stderr. */
+export function printMCPWatchReady(projectRoot: string): void {
+  process.stderr.write(
+    `\n  ${C.magenta}${C.bold}◉  MCP Watch Active${C.reset}\n` +
+    `     ${C.yellow}MONITORING ONLY${C.reset} ${C.dim}— suspicious calls are logged, not blocked${C.reset}\n` +
+    `     ${C.cyan}${projectRoot}${C.reset} ${C.dim}is the monitored project root${C.reset}\n\n`
+  );
+}
+
 /**
  * Prints a tip/hint line
  */
 export function printTip(msg: string): void {
-  process.stdout.write(`  ${C.dim}Tip:${C.reset} ${C.dim}${msg}${C.reset}\n`);
+  process.stderr.write(`  ${C.dim}Tip:${C.reset} ${C.dim}${msg}${C.reset}\n`);
 }

@@ -1,72 +1,37 @@
-/**
- * Secret Gate Client
- *
- * Helper module for applications to fetch secrets from the Airlock broker
- * instead of reading .env files directly from disk.
- *
- * Usage in your application:
- *   import { getSecrets } from 'airlock/secretgate/client';
- *   const secrets = await getSecrets(['DATABASE_URL', 'API_KEY']);
- *   console.log(secrets.DATABASE_URL);
- */
-
 import { connect, type Socket } from "node:net";
-import { platform } from "node:os";
+import { getSocketPath } from "../utils/socketPath.js";
 
-const SOCKET_PATH =
-  platform() === "win32"
-    ? "\\\\.\\pipe\\airlock-secrets"
-    : "/tmp/airlock-secrets.sock";
+const MAX_RESPONSE_BYTES = 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 5_000;
+const KEY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/**
- * Fetches secrets from the Airlock Secret Gate broker
- *
- * @param keys - Array of environment variable names to retrieve
- * @returns Promise resolving to object with requested secrets
- */
 export function getSecrets(keys: string[]): Promise<Record<string, string | undefined>> {
+  if (keys.length === 0 || keys.length > 128 || keys.some((key) => !KEY_NAME.test(key))) return Promise.reject(new Error("Secret keys must be valid environment-variable names (1-128 keys)"));
   return new Promise((resolve, reject) => {
-    const socket: Socket = connect(SOCKET_PATH);
-
+    let settled = false;
+    let timeout: NodeJS.Timeout;
+    const settle = (fn: () => void): void => { if (!settled) { settled = true; clearTimeout(timeout); fn(); } };
+    const socket: Socket = connect(getSocketPath());
     let responseData = "";
-
-    socket.on("connect", () => {
-      // Send requested keys (newline-separated, terminated with double newline)
-      const request = keys.join("\n") + "\n\n";
-      socket.write(request);
+    timeout = setTimeout(() => { socket.destroy(); settle(() => reject(new Error("Secret Gate request timed out"))); }, REQUEST_TIMEOUT_MS);
+    timeout.unref();
+    socket.once("connect", () => socket.write(`${keys.join("\n")}\n\n`));
+    socket.on("data", (chunk: Buffer) => {
+      responseData += chunk.toString("utf8");
+      if (Buffer.byteLength(responseData) > MAX_RESPONSE_BYTES) socket.destroy(new Error("Secret Gate response too large"));
     });
-
-    socket.on("data", (chunk) => {
-      responseData += chunk.toString();
-    });
-
-    socket.on("end", () => {
+    socket.once("end", () => settle(() => {
       try {
-        const secrets = JSON.parse(responseData);
-        resolve(secrets);
-      } catch (error) {
-        reject(new Error(`Failed to parse secrets response: ${error}`));
-      }
-    });
-
-    socket.on("error", (err) => {
-      reject(new Error(`Failed to connect to Secret Gate broker: ${err.message}`));
-    });
+        const response: unknown = JSON.parse(responseData);
+        if (!response || typeof response !== "object" || Array.isArray(response) || "error" in response) throw new Error("Broker rejected request");
+        resolve(response as Record<string, string | undefined>);
+      } catch (error) { reject(error instanceof Error ? error : new Error("Invalid Secret Gate response")); }
+    }));
+    socket.once("error", (error) => settle(() => reject(new Error(`Secret Gate connection failed: ${error.message}`))));
   });
 }
 
-/**
- * Loads all secrets and injects them into process.env
- * This allows legacy code that reads process.env directly to continue working
- *
- * @param keys - Array of environment variable names to load
- */
 export async function loadIntoProcessEnv(keys: string[]): Promise<void> {
   const secrets = await getSecrets(keys);
-
-  for (const [key, value] of Object.entries(secrets)) {
-    if (value !== undefined) {
-      process.env[key] = value;
-    }
-  }
+  for (const [key, value] of Object.entries(secrets)) if (value !== undefined) process.env[key] = value;
 }

@@ -143,6 +143,7 @@ export async function runDevServer({
       env: childEnv,
       stdio: "inherit", // Pipe stdio directly so user sees original logs
       shell: useShell,
+      detached: !useShell && process.platform !== "win32",
     });
   } catch (err) {
     logger.error({ err, command: childCommand }, "Failed to spawn child process");
@@ -223,15 +224,22 @@ export function cleanup(): void {
 
   if (activeChildProcess) {
     try {
-      // Try polite SIGTERM first
-      activeChildProcess.kill("SIGTERM");
-      // Give it a brief window, then force kill if still running
       const pid = activeChildProcess.pid;
-      setTimeout(() => {
-        if (activeChildProcess && activeChildProcess.pid === pid) {
-          activeChildProcess.kill("SIGKILL");
+      if (pid) {
+        if (process.platform !== "win32") {
+          try { process.kill(-pid, "SIGTERM"); } catch { activeChildProcess.kill("SIGTERM"); }
+          setTimeout(() => {
+            try { process.kill(-pid, "SIGKILL"); } catch {}
+          }, 500).unref();
+        } else {
+          activeChildProcess.kill("SIGTERM");
+          setTimeout(() => {
+            if (activeChildProcess && activeChildProcess.pid) {
+              activeChildProcess.kill("SIGKILL");
+            }
+          }, 500).unref();
         }
-      }, 500).unref();
+      }
     } catch {
       // Process might already be dead
     }

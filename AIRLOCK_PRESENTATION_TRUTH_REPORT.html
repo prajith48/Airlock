@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Airlock — Implementation Truth Report</title>
+<style>
+  @page { size: A4; margin: 18mm 17mm 17mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#14213d; font-size:10.3pt; line-height:1.42; }
+  h1 { font-size:30pt; letter-spacing:-1px; color:#102a43; margin:0 0 5px; }
+  h2 { color:#0b7285; font-size:18pt; margin:18px 0 7px; border-bottom:2px solid #cce3e8; padding-bottom:4px; }
+  h3 { color:#1c4e80; font-size:12.5pt; margin:13px 0 4px; }
+  p { margin:5px 0 9px; } ul { margin:5px 0 9px 18px; padding:0; } li { margin:3px 0; }
+  .cover { min-height:245mm; display:flex; flex-direction:column; justify-content:center; }
+  .kicker { color:#0b7285; text-transform:uppercase; letter-spacing:2px; font-size:10pt; font-weight:bold; }
+  .subtitle { font-size:15pt; color:#486581; max-width:490px; }
+  .meta { margin-top:32px; padding:13px 16px; border-left:5px solid #0b7285; background:#f0f7f8; width:85%; }
+  .page { page-break-before:always; }
+  .callout { padding:10px 13px; background:#eef6ff; border-left:4px solid #1971c2; margin:10px 0; }
+  .warning { padding:10px 13px; background:#fff4e6; border-left:4px solid #f08c00; margin:10px 0; }
+  .good { padding:10px 13px; background:#ebfbee; border-left:4px solid #2f9e44; margin:10px 0; }
+  table { width:100%; border-collapse:collapse; margin:8px 0 12px; font-size:9.2pt; }
+  th { background:#0b7285; color:white; text-align:left; padding:7px; }
+  td { border:1px solid #cbd5e1; padding:7px; vertical-align:top; }
+  tr:nth-child(even) td { background:#f8fafc; }
+  code { font-family:"DejaVu Sans Mono", monospace; font-size:8.5pt; background:#edf2f7; padding:1px 3px; }
+  .footer { color:#627d98; font-size:8.5pt; margin-top:20px; }
+</style>
+</head>
+<body>
+<section class="cover">
+  <div class="kicker">Presentation companion · implementation status</div>
+  <h1>AIRLOCK</h1>
+  <p class="subtitle">An honest account of the current prototype: what was designed, what is implemented, what was deliberately compromised, and what still needs proof.</p>
+  <div class="meta"><strong>Prepared for presentation use</strong><br>Repository reviewed locally on 12 October 2026<br>Scope: Dev Server Guard · MCP Watch · Secret Gate</div>
+  <p class="footer">Read this alongside <em>Airlock — Master Project Document</em>. The master document explains the intended architecture and rationale; this report records the evidence available in the current codebase.</p>
+</section>
+
+<section class="page">
+<h2>1. Executive statement</h2>
+<p>Airlock is a local-first security prototype for three developer workflows: exposing a local development server, using MCP-connected AI tools, and handling plaintext environment files. The project is credible as a prototype because it contains executable TypeScript components, a CLI, focused regression tests, packaging controls, and an evidence-based demonstration flow.</p>
+<div class="callout"><strong>The accurate one-sentence claim:</strong> Airlock provides a loopback-only request filter for a wrapped development server, a passive MCP stdio monitor, and a local in-memory secret broker with explicit source-file deletion.</div>
+<p>It is <strong>not</strong> a production-certified security product, a complete host security boundary, an MCP enforcement engine, or a hardware-backed secret vault. The distinction is important: the master document describes a desired direction; the repository proves only the behaviors listed in this report.</p>
+
+<h3>Why the three parts belong together</h3>
+<ul><li><strong>Dev Server Guard:</strong> reduces browser-to-loopback DNS-rebinding exposure by accepting only local Host/Origin/Referer authorities.</li>
+<li><strong>MCP Watch:</strong> makes suspicious tool-path requests visible without changing MCP message content.</li>
+<li><strong>Secret Gate:</strong> removes routine plaintext-file access after a deliberate transfer into process memory.</li></ul>
+</section>
+
+<section class="page">
+<h2>2. Architecture as implemented</h2>
+<table><tr><th>Component</th><th>Actual implementation</th><th>Security posture</th></tr>
+<tr><td>Dev Server Guard</td><td>Node HTTP reverse proxy bound to <code>127.0.0.1</code>. It starts a child dev-server command with localhost-oriented environment variables and forwards HTTP/WebSocket traffic to an internal target port.</td><td><strong>Rejecting.</strong> Requests with invalid Host, Origin, Referer, or duplicate sensitive headers are dropped before forwarding.</td></tr>
+<tr><td>MCP Watch</td><td>Node child-process wrapper. It copies stdin to the wrapped server and wrapped stdout to stdout. It parses newline-delimited JSON-RPC tool calls only for observation.</td><td><strong>Passive/fail-open.</strong> It warns for traversal/sensitive paths but intentionally does not block them.</td></tr>
+<tr><td>Secret Gate</td><td>In-memory map loaded from a dotenv file and served through a local Unix-domain socket (named pipe path on Windows).</td><td><strong>Local convenience boundary.</strong> Request sizes, key format, timeouts, socket permissions, and explicit deletion are enforced.</td></tr>
+</table>
+
+<h3>Trust boundaries</h3>
+<ul><li>Guard trusts only loopback authorities; it does not authenticate an application user.</li><li>MCP Watch trusts the wrapped MCP server and observes only the JSON-RPC framing it understands.</li><li>Secret Gate relies on OS user/process isolation and socket filesystem permissions; it does not authenticate a hostile same-user process.</li></ul>
+</section>
+
+<section class="page">
+<h2>3. Delivered capabilities and evidence</h2>
+<h3>Dev Server Guard</h3>
+<ul><li>Strict host parser accepts only <code>localhost</code> or <code>127.0.0.1</code>, with an optional numeric port from 1–65535.</li><li>Regression coverage rejects <code>localhost:3000@evil.com</code>, suffix tricks, duplicated ports, invalid ports, missing Host, and hostile Origin/Referer values.</li><li>Origin and Referer are parsed as URLs, require HTTP/HTTPS local hosts, and reject credentials.</li><li>HTTP and WebSocket upgrade requests are checked before proxy forwarding.</li></ul>
+<h3>Secret Gate</h3>
+<ul><li>Uses <code>dotenv</code> parsing for normal quotes, CRLF, comments, whitespace, and values containing equals signs.</li><li>Validates environment-variable names and bounds requests to 128 names / 16 KiB.</li><li>Uses a per-user runtime directory with Unix directory mode 0700 and socket mode 0600.</li><li>Probes a pre-existing socket before removal and refuses to replace a non-socket object.</li><li>Loads and binds before deletion. Deletion requires <code>--delete-source</code>.</li></ul>
+<h3>MCP Watch</h3>
+<ul><li>All visual output and logs use stderr; stdout is reserved for protocol bytes.</li><li>Monitors common path argument names and logs traversal or sensitive-path alerts.</li><li>Buffers incomplete newline-delimited JSON messages up to 1 MiB to reduce memory-abuse risk.</li><li>Explicitly labels itself <em>MONITORING ONLY</em>; it does not claim to block an operation.</li></ul>
+</section>
+
+<section class="page">
+<h2>4. Compromises and improvised decisions</h2>
+<p>These are deliberate prototype trade-offs, not hidden defects. Present them as engineering judgment: each buys simplicity or compatibility at the cost of coverage.</p>
+<table><tr><th>Decision / compromise</th><th>Reason</th><th>Consequence</th></tr>
+<tr><td>MCP Watch is passive, not enforcing.</td><td>Blocking malformed or uncertain tool traffic can break an IDE workflow and requires protocol-specific behavior.</td><td>A warning is not protection. A malicious operation may still occur.</td></tr>
+<tr><td>Newline-delimited JSON-RPC inspection.</td><td>Simple, transparent handling for common stdio MCP servers.</td><td>Other framing/transports are not proven. Do not market universal MCP coverage.</td></tr>
+<tr><td>Hostname allowlist limited to localhost/IPv4 loopback.</td><td>Eliminates ambiguous authority parsing and keeps the security boundary comprehensible.</td><td>IPv6 loopback and custom local domains are unsupported unless intentionally added and tested.</td></tr>
+<tr><td>Child server receives common HOST/PORT variables.</td><td>Works with many development servers without shell command construction.</td><td>Not universal: a server that ignores those variables can bind differently or fail to start.</td></tr>
+<tr><td>Local Unix socket for secrets.</td><td>Simple no-network IPC with restrictive permissions.</td><td>It cannot defend against same-user malware, memory inspection, swap, backups, snapshots, or debugging.</td></tr>
+<tr><td>Ordinary file unlink for optional deletion.</td><td>Portable, explicit behavior.</td><td>It is not secure erasure; data can remain recoverable on modern filesystems.</td></tr></table>
+</section>
+
+<section class="page">
+<h2>5. Validation and test truth</h2>
+<div class="good"><strong>Commands successfully run on the reviewed workspace:</strong><br><code>npm run build</code> · <code>npm test</code> · <code>npm run lint</code> · <code>npm run test:coverage</code> · <code>npm pack --dry-run</code></div>
+<table><tr><th>Check</th><th>Observed result</th></tr>
+<tr><td>Build / static checking</td><td>TypeScript build and <code>tsc --noEmit</code> passed.</td></tr>
+<tr><td>Unit tests</td><td>23 tests passed. 4 Secret Gate socket integration tests were skipped because this sandbox returned <code>EPERM</code> for Unix-domain socket creation.</td></tr>
+<tr><td>Coverage</td><td>12.15% statements, 16.62% branches, 8.73% functions, 13.25% lines. This is low and should be stated plainly.</td></tr>
+<tr><td>Packaging</td><td><code>npm pack --dry-run</code> showed runtime artifacts and metadata only after a new npm ignore policy; scratch files and logs are excluded.</td></tr>
+<tr><td>Dependency audit</td><td>The dependency installation reported zero vulnerabilities. A direct advisory query was blocked by the environment DNS/network restriction, so it is not an independent audit result.</td></tr></table>
+<div class="warning"><strong>Important:</strong> automated end-to-end MCP Watch coverage is still missing. The relay was hardened structurally, but a demonstration should be performed against the specific MCP client/server combination you intend to present.</div>
+</section>
+
+<section class="page">
+<h2>6. Known limitations and next work</h2>
+<h3>Do not overclaim</h3>
+<ul><li>Guard does not secure an application already exposed by another interface, and it does not replace application authentication or authorization.</li><li>MCP Watch detects selected suspicious path patterns; it cannot prove a path operation was blocked, nor can it inspect every possible tool argument schema.</li><li>Secret Gate moves secrets out of a regular file only after successful startup and explicit authorization. It does not make secrets inaccessible to the same operating-system user.</li><li>Linux-like Unix socket behavior is the best-tested intent. Windows named-pipe behavior is not equivalently integration-tested.</li><li>Coverage is insufficient for a production security claim, especially proxy lifecycle, child shutdown, CLI failures, MCP stream behavior, and real socket behavior.</li></ul>
+<h3>Highest-value next steps</h3>
+<ol><li>Add isolated HTTP and WebSocket proxy integration tests.</li><li>Add real MCP client/server fixtures covering chunks, multiple messages, backpressure, child failure, and warning output.</li><li>Run Secret Gate tests on a normal machine with <code>AIRLOCK_TEST_UNIX_SOCKETS=1</code>.</li><li>Add CI for build, lint, test, coverage, and npm-package contents.</li><li>Consider enforcement only after a protocol-level policy and compatibility matrix exist.</li></ol>
+</section>
+
+<section class="page">
+<h2>7. Demonstration message</h2>
+<p><strong>Opening:</strong> “Airlock is a local security prototype focused on three common developer trust assumptions: localhost is private, AI tool calls stay in scope, and a dotenv file is harmless.”</p>
+<p><strong>Guard:</strong> show one accepted localhost request, then hostile Host and Origin requests being dropped. State that this is the most demonstrably enforced component.</p>
+<p><strong>Secret Gate:</strong> use fake credentials only. Show an explicit request for one key and show that deletion requires the separate <code>--delete-source</code> flag.</p>
+<p><strong>MCP Watch:</strong> call it an observability layer, not a blocker. Show its stderr warning/log for a suspicious path only after validating it with the chosen MCP server.</p>
+<div class="callout"><strong>Closing:</strong> “The value of Airlock at this stage is explicit boundaries and honest behavior: block where the input is clear, monitor where enforcement would be disruptive, and document what the system cannot promise.”</div>
+<p>For exact commands, expected outputs, and recovery actions, use <code>DEMO_RUNBOOK.md</code> in the repository.</p>
+<p class="footer">This report intentionally distinguishes design intent from demonstrated implementation. It is the safer and more credible document to present alongside the 22-page master project document.</p>
+</section>
+</body></html>

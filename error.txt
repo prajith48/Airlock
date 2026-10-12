@@ -1,0 +1,1 @@
+[17:00:59.812] INFO (31132): This should go to stderr

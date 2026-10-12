@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "A local-first security layer for development servers and AI agent tooling",
   "main": "dist/cli.js",
+  "exports": {
+    ".": "./dist/cli.js",
+    "./secretgate/client": "./dist/secretgate/client.js"
+  },
   "type": "module",
   "bin": {
     "airlock": "./dist/cli.js"
@@ -10,9 +14,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "test": "vitest",
+    "test": "npm run build && vitest --run",
+    "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage",
+    "test:coverage": "npm run build && vitest --coverage",
     "lint": "tsc --noEmit",
     "start": "npm run build && node dist/cli.js",
     "status": "node dist/cli.js status",
@@ -23,7 +28,7 @@
     "quick:guard": "node dist/cli.js guard --port 3000 node test-server.js",
     "quick:secret-gate": "node dist/cli.js secret-gate start",
     "demo": "npm run build && node dist/cli.js status && node dist/cli.js guard --port 3000 node test-server.js",
-    "clean": "rm -rf dist && rm -f /tmp/airlock-secrets.sock"
+    "clean": "rm -rf dist && rm -f /tmp/airlock-secrets.sock /tmp/airlock-*/secrets.sock"
   },
   "keywords": [
     "security",
@@ -49,6 +54,7 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^5.0.4",
     "tsx": "^4.23.5",
     "vitest": "^5.0.3"
   }

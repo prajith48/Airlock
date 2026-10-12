@@ -18,6 +18,9 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
  */
 export type Component = "guard" | "mcpwatch" | "secretgate" | "cli" | "errorHandler";
 
+import pinoPretty from "pino-pretty";
+import { createWriteStream } from "node:fs";
+
 /**
  * Creates a logger instance for a specific component
  *
@@ -26,38 +29,29 @@ export type Component = "guard" | "mcpwatch" | "secretgate" | "cli" | "errorHand
  * @returns Configured pino logger instance
  */
 export function createLogger(component: Component, logFilePath?: string) {
-  const destinations = [];
-
-  // Professional terminal output: component prefix inline, no extra lines
-  destinations.push({
-    target: "pino-pretty",
-    level: "info",
-    options: {
-      colorize: true,
-      translateTime: "HH:MM:ss",
-      // Show component as a prefix tag, suppress pid/hostname
-      ignore: "pid,hostname,component",
-      messageFormat: `\x1b[2m[{component}]\x1b[0m {msg}`,
-      levelFirst: false,
-      singleLine: true,
-    },
+  // Use synchronous streams to avoid interleaving with child process stdio
+  const prettyStream = pinoPretty({
+    colorize: true,
+    translateTime: "HH:MM:ss",
+    ignore: "pid,hostname,component",
+    messageFormat: `\x1b[2m[{component}]\x1b[0m {msg}`,
+    levelFirst: false,
+    singleLine: true,
+    destination: 2, // stderr
   });
 
-  // File output for audit trail (always written as structured JSON for monitor.sh)
   const logPath = logFilePath || "airlock.log";
-  destinations.push({
-    target: "pino/file",
-    level: "debug",
-    options: { destination: logPath },
-  });
+  const fileStream = createWriteStream(logPath, { flags: "a" });
+
+  const streams = [
+    { stream: prettyStream, level: "info" as const },
+    { stream: fileStream, level: "debug" as const },
+  ];
 
   const logger = pino({
-    level: process.env.LOG_LEVEL || "info",
+    level: process.env.LOG_LEVEL || "debug",
     base: { component },
-    transport: {
-      targets: destinations,
-    },
-  });
+  }, pino.multistream(streams));
 
   return logger;
 }
